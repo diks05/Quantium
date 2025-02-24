@@ -1,0 +1,1413 @@
+---
+title: "Quantium Virtual Internship - Retail Strategy and Analytics - Task 1"
+mainfont: Roboto
+monofont: Consolas
+output:
+  pdf_document:
+    df_print: default
+    highlight: tango
+    keep_tex: yes
+    latex_engine: xelatex
+header-includes: |
+  \usepackage{fvextra}
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+---
+
+```{r setup, include=FALSE}
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+# set options for R markdown knitting
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(linewidth=80)
+```
+
+```{r knitr line wrap setup, include=FALSE}
+# set up line wrapping in MD knit output
+library(knitr)
+hook_output = knit_hooks$get("output")
+knit_hooks$set(output = function(x, options)
+{
+# this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth))
+  {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n))
+      x = strwrap(x, width = n)
+    x = paste(x, collapse = "\n")
+  }
+  hook_output(x, options)
+})
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+install.packages("data.table")
+install.packages("readr")
+installed.packages("ggrepel")
+install.packages("ggmosaic")
+
+#### Load required libraries
+library(data.table)
+library(ggplot2)
+library(readr)
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(broom)
+library(magrittr)
+
+
+library(table1)
+library(rmarkdown)
+library(lubridate)
+
+```
+
+```{r}
+file.exists("C:/Users/barad/Desktop/Quantinum Internship/QVI_purchase_behaviour.csv")
+
+```
+
+\
+**Loading and Joining Dataset**
+
+```{r}
+#load dataset
+customerData <- read.csv("C:/Users/barad/Desktop/Quantinum Internship/QVI_purchase_behaviour.csv") %>%
+  janitor::clean_names()
+transactionData <- read_xlsx("C:/Users/barad/Desktop/Quantinum Internship/QVI_transaction_data.xlsx") %>%
+  janitor::clean_names()
+```
+
+```{r Joining dataset}
+combinedData <- inner_join(transactionData, customerData, by = "lylty_card_nbr")
+write.csv(combinedData, "C:/Users/barad/Desktop/Quantinum Internship/Combined_Data.csv", row.names = FALSE)
+
+
+```
+
+**Removing any empty values**
+
+```{r removal_of_empty_lyltycardnbr_values}
+combinedData <- combinedData %>% 
+  filter(!is.na(lylty_card_nbr))
+```
+
+```{r checking format of columns}
+str(combinedData)
+```
+
+```{r}
+head(combinedData)
+```
+
+**Converting to table and understanding the class of each column**
+
+```{r}
+# Convert to data.table if it's a data frame
+combinedData <- as.data.table(combinedData)
+
+# Check the class of each column
+sapply(combinedData, class)
+```
+
+**Converting date column into acceptable date format**
+
+```{r}
+#convert Date column in date format
+combinedData$date <- as.Date(combinedData$date, origin = "1899-12-30")
+view(combinedData)
+```
+
+```{r summary of PROD_NAME}
+summary(combinedData$prod_name)
+```
+
+**Only working on chips and removing digits and special characters.**
+
+```{r}
+# Load necessary libraries
+library(data.table)
+
+# Assuming 'transactionData' is your data.table and 'PROD_NAME' is the column with product names
+# Step 1: Split the product names into individual words
+productWords <- data.table(unlist(strsplit(unique(combinedData[, prod_name]), " ")))
+
+# Step 2: Set column name to 'words'
+setnames(productWords, 'words')
+
+# Step 3: Remove words containing digits or special characters (like '&', 'g')
+# Using grepl to remove words that contain non-alphabetic characters (including digits and special characters)
+productWords <- productWords[!grepl("[^a-zA-Z]", words)]
+
+# Step 4: Remove any potential empty strings that may have resulted from cleaning
+productWords <- productWords[words != ""]
+
+# Step 5: Count the frequency of each word using table() and sort by frequency
+wordFrequency <- data.table(table(productWords$words))
+setnames(wordFrequency, c("word", "frequency"))
+
+# Step 6: Sort the words by frequency (highest to lowest)
+wordFrequency <- wordFrequency[order(-frequency)]
+
+# Step 7: View the most common words
+print(wordFrequency)
+
+# Optional: You can inspect the top words by frequency
+head(wordFrequency)
+
+```
+
+**removing salsa products from the dataset as only interested in chips**
+
+```{r}
+# Remove salsa products
+combinedData[, SALSA := grepl("salsa", tolower(prod_name))]
+combinedData <- combinedData[SALSA == FALSE, ][, SALSA := NULL]
+head(combinedData)
+```
+
+```{r}
+summary(combinedData)
+```
+
+**Checking for in outliers in product quantity**
+
+```{r scatter plot for prod_qty to determine outliers}
+ggplot(combinedData, aes(x = 1:nrow(combinedData), y = prod_qty)) +
+  geom_point(color = "blue", alpha = 0.5) +
+  labs(title = "Scatter Plot of Product Quantity (prod_qty)",
+       x = "Index",
+       y = "Product Quantity (prod_qty)") +
+  theme_minimal()
+```
+
+```{r}
+# remove outliers in prod_qty
+combinedData_filtered <- filter(combinedData, prod_qty != 200)
+
+```
+
+**Removing customer lyty number that purchased 200 prod qty**
+
+```{r}
+#check if more transactions made by customer who purchased 200 qty
+cust_200 <- filter(combinedData, prod_qty == 200)
+unique(cust_200$lylty_card_nbr)
+trans_made_cust_200 <- filter(combinedData, lylty_card_nbr == 226000)
+print(trans_made_cust_200)
+```
+
+It looks like this customer has only had the two transactions over the year and is\
+not an ordinary retail customer. The customer might be buying chips for commercial\
+purposes instead. We'll remove this loyalty card number from further analysis.
+
+```{r}
+#remove the customer lyty number from original dataset
+combinedData <- filter(combinedData, lylty_card_nbr != 226000)
+```
+
+```{r}
+summary(combinedData)
+```
+
+```{r}
+#count number of unique transactions/number of days
+num_days <- combinedData %>%
+  summarise(num_distinct_days = n_distinct(date))
+print(num_days)
+```
+
+Looks like there is one missing date
+
+```{r}
+# Count the number of transactions per date
+transaction_count_per_date <- combinedData %>%
+  group_by(date) %>%
+  summarise(transaction_count = n())
+
+# View the result
+transaction_count_per_date
+
+```
+
+missing date is 25th DEC - Christmas - maybe the stores were closed on this holiday.
+
+```{r}
+#### Setting plot themes to format graphs
+theme_set(theme_bw())
+theme_update(plot.title = element_text(hjust = 0.5))
+#### Plot transactions over time
+ggplot(transaction_count_per_date, aes(x = date, y = transaction_count)) +
+geom_line() +
+labs(x = "Day", y = "Number of transactions", title = "Transactions over time") +
+scale_x_date(breaks = "1 month") +
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+Zooming the chart to see the specific dates - December
+
+```{r}
+#filter out dates in dec
+start_date <- as.Date("2018-12-01")
+end_date <- as.Date("2018-12-31")
+transaction_count_per_date_filtered = filter(transaction_count_per_date, date >= start_date & date <= end_date)
+
+transaction_count_per_date_filtered
+
+sorted_date <- transaction_count_per_date_filtered %>%
+  arrange(date)
+
+```
+
+```{r}
+all_dates <- seq(min(transaction_count_per_date_filtered$date), 
+                 max(transaction_count_per_date_filtered$date), 
+                 by = "day")
+
+missing_dates <- setdiff(all_dates, transaction_count_per_date_filtered$date)
+missing_dates
+
+# Step 2: Create a data frame with the full date range
+complete_data <- data.frame(date = all_dates)
+
+# Step 3: Merge the full date range with the existing data
+transaction_count_per_date_filtered <- merge(
+  complete_data, 
+  transaction_count_per_date_filtered, 
+  by = "date", 
+  all.x = TRUE  # Keep all dates from the full range
+)
+
+# Step 4: Replace NA values in 'N' with 0 for the missing dates
+transaction_count_per_date_filtered$transaction_count[is.na(transaction_count_per_date_filtered$transaction_count)] <- NA
+
+
+```
+
+```{r}
+ggplot(transaction_count_per_date_filtered, aes(x = date, y = transaction_count)) +
+  geom_line() +
+  labs(x = "Day", y = "Number of transactions", title = "Transactions over time") +
+  scale_x_date(date_breaks = "1 day", date_labels = "%b %d") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+
+```
+
+We can see that the increase in sales occurs in the lead-up to Christmas and that\
+there are zero sales on Christmas day itself. This is due to shops being closed on\
+Christmas day.
+
+**Now lets check the packet sizes**
+
+```         
+install.packages("data.table")
+```
+
+```{r}
+combinedData[, pack_size := parse_number(prod_name)]
+```
+
+```{r}
+combinedData[, .N, pack_size][order(pack_size)]
+```
+
+```{r histogram of pack sizes}
+ggplot(combinedData, aes(pack_size))+ geom_histogram()
+```
+
+```{r creating brand names}
+# Extract the first word from `prod_name` to create `brand_name`
+combinedData <- combinedData %>%
+  mutate(brand_name = word(prod_name, 1))
+
+# Check the result
+head(combinedData)
+
+combinedData[, .N, brand_name][order(brand_name)]
+```
+
+```{r Clean brand names}
+#### Clean brand names
+combinedData[brand_name == "Red", brand_name := "RRD"]
+combinedData[brand_name =='Smith' , brand_name := 'Smiths']
+combinedData[brand_name == "Snbts", brand_name := "Sunbites"]
+combinedData[brand_name == "Infzns", brand_name := "Infuzions"]
+combinedData[brand_name == "WW", brand_name := "Woolworths"]
+combinedData[brand_name == "NCC", brand_name := "Natural"]
+combinedData[brand_name == "Dorito", brand_name := "Doritos"]
+combinedData[brand_name == "Grain", brand_name := "GrnWves"]
+
+combinedData[, .N, brand_name][order(brand_name)]
+```
+
+**Data analysis on customer segments**
+
+```{r}
+summary(combinedData)
+```
+
+```{r}
+combinedData[ , .N, lifestage][order(lifestage)]
+```
+
+```{r}
+combinedData[ , .N, premium_customer][order(premium_customer)]
+```
+
+**Understanding sales by lifestyle and premium_cust**
+
+```{r}
+# Calculate total sales by LIFESTAGE and PREMIUM_CUSTOMER
+sales_by_segment <- combinedData %>%
+  group_by(lifestage, premium_customer) %>%
+  summarise(total_sales = sum(tot_sales, na.rm = TRUE)) %>%
+  ungroup()
+
+# Check the result
+print(sales_by_segment)
+
+```
+
+```{r}
+library(ggplot2)
+
+# Bar plot of total sales by LIFESTAGE and PREMIUM_CUSTOMER
+ggplot(sales_by_segment, aes(x = lifestage, y = total_sales, fill = premium_customer)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Total Chip Sales by Lifestage and Premium Customer Segment",
+    x = "Lifestage",
+    y = "Total Sales"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+
+```
+
+Sales are coming mainly from Budget - older families, Mainstream - young\
+singles/couples, and Mainstream - retirees
+
+Let's see if the higher sales are due to there being more customers who buy chips.
+
+```{r}
+# Calculate customers by LIFESTAGE and PREMIUM_CUSTOMER
+# Count unique customers by lifestage and premium_customer
+customers <- combinedData %>%
+  group_by(lifestage, premium_customer) %>%
+  summarise(customers = n_distinct(lylty_card_nbr)) %>%
+  ungroup()
+
+# Check the result
+print(customers)
+
+```
+
+```{r}
+# Bar plot of total sales by LIFESTAGE and PREMIUM_CUSTOMER
+ggplot(customers, aes(x = lifestage, y = customers, fill = premium_customer)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Total Customers by Lifestage and Premium Customer Segment",
+    x = "Lifestage",
+    y = "Customers"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+
+```
+
+There are more **Mainstream - young singles/couples and Mainstream - retirees** who buy\
+chips. This contributes to there being more sales to these customer segments (more customers for these sales) but\
+this is not a major driver for the Budget - Older families segment.\
+Higher sales may also be driven by more units of chips being bought per customer.
+
+```{r}
+avg_units_per_cust <- combinedData %>%
+  group_by(lifestage, premium_customer) %>%
+  summarise(
+    tot_units = sum(prod_qty),
+    tot_cust = n_distinct(lylty_card_nbr),
+    avg_units = tot_units / tot_cust
+  )%>%
+  ungroup()
+
+print(avg_units_per_cust)
+```
+
+```{r}
+# Bar plot of avg units per customer by LIFESTAGE and PREMIUM_CUSTOMER
+ggplot(avg_units_per_cust, aes(x = lifestage, y = avg_units, fill = premium_customer)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Avg units per customer by Lifestage and Premium Customer Segment",
+    x = "Lifestage",
+    y = "Avg units per customer"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+
+```
+
+Older families and young families in general buy more chips per customer (more quantity per person)
+
+**Understanding avg cost per segament**
+
+```{r}
+avg_price_per_unit <- combinedData %>%
+  group_by(lifestage, premium_customer) %>%
+  summarise(
+    sales = sum(tot_sales),
+    tot_units = sum(prod_qty),
+    avg_price = sales / tot_units
+  )%>%
+  ungroup()
+
+print(avg_price_per_unit)
+```
+
+```{r}
+# Bar plot of avg price per unit by LIFESTAGE and PREMIUM_CUSTOMER
+ggplot(avg_price_per_unit, aes(x = lifestage, y = avg_price, fill = premium_customer)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Avg price per unit by Lifestage and Premium Customer Segment",
+    x = "Lifestage",
+    y = "Avg price per unit"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+```
+
+**Mainstream midage and young singles and couples are more willing to pay more per\
+packet of chips** compared to their budget and premium counterparts. This may be due\
+to premium shoppers being more likely to buy healthy snacks and when they buy\
+chips, this is mainly for entertainment purposes rather than their own consumption.\
+This is also supported by there being fewer premium midage and young singles and\
+couples buying chips compared to their mainstream counterparts.
+
+More price due to more customers in that segment:
+
+```{r}
+pricePerUnit <- combinedData[, price := tot_sales/prod_qty]
+t.test(combinedData[lifestage %in% c("YOUNG SINGLES/COUPLES", "MIDAGE SINGLES/COUPLES")
+& premium_customer == "Mainstream", price]
+, combinedData[lifestage %in% c("YOUNG SINGLES/COUPLES", "MIDAGE SINGLES/COUPLES")
+& premium_customer != "Mainstream", price]
+, alternative = "greater")
+
+```
+
+The t-test results in a p-value \< 2.2e-16, i.e. the unit price for mainstream, young and mid-age singles and\
+couples are significantly higher than that of budget or premium, young and midage singles and couples.
+
+**Exploring YOUNG SINGLES/COUPLES**
+
+brand affinity,
+
+```{r}
+#### Deep dive into Mainstream, young singles/couples
+segment1<- combinedData[lifestage == "YOUNG SINGLES/COUPLES" & premium_customer ==
+"Mainstream",]
+
+other <- combinedData[!(lifestage == "YOUNG SINGLES/COUPLES" & premium_customer ==
+"Mainstream"),]
+
+
+#### Brand affinity compared to the rest of the population
+quantity_segment1 <- segment1[, sum(prod_qty)] #Total product quantity for the target segment.
+
+quantity_other <- other[, sum(prod_qty)]
+
+quantity_segment1_by_brand <- segment1[, .(targetSegment = sum(prod_qty)/quantity_segment1), by = brand_name] #Proportion of purchases for each brand in the target segment.
+
+quantity_other_by_brand <- other[, .(other = sum(prod_qty)/quantity_other), by = brand_name]
+
+brand_proportions <-  merge(quantity_segment1_by_brand, quantity_other_by_brand)[, affinityToBrand := targetSegment/other] #Merge Data and Calculate Brand Affinity:
+
+brand_proportions[order(-affinityToBrand)] 
+
+```
+
+• Mainstream young singles/couples are 23% more likely to purchase Tyrrells chips compared to the\
+rest of the population\
+• Mainstream young singles/couples are 56% less likely to purchase Burger Rings compared to the rest\
+of the population
+
+```{r}
+#### Preferred pack size compared to the rest of the population
+quantity_segment1_by_pack <- segment1[, .(targetSegment = sum(prod_qty)/quantity_segment1), by = pack_size]
+
+quantity_other_by_pack <- other[, .(other = sum(prod_qty)/quantity_other), by = pack_size]
+
+pack_proportions <- merge(quantity_segment1_by_pack, quantity_other_by_pack)[,affinityToPack := targetSegment/other]
+
+pack_proportions[order(-affinityToPack)]
+```
+
+It looks like Mainstream young singles/couples are 27% more likely to purchase a 270g pack of chips com-\
+pared to the rest of the population but let’s dive into what brands sell this pack size.
+
+```{r}
+combinedData[pack_size == 270, unique(prod_name)]
+```
+
+Twisties are the only brand offering 270g packs and so this may instead be reflecting a higher likelihood of\
+purchasing Twisties.
+
+Conclusion\
+Let’s recap what we’ve found!\
+Sales have mainly been due to Budget - older families, Mainstream - young singles/couples, and Mainstream\
+- retirees shoppers. We found that the high spend in chips for mainstream young singles/couples and re-\
+tirees is due to there being more of them than other buyers. Mainstream, midage and young singles and\
+couples are also more likely to pay more per packet of chips. This is indicative of impulse buying behaviour.\
+We’ve also found that Mainstream young singles and couples are 23% more likely to purchase Tyrrells chips\
+compared to the rest of the population. The Category Manager may want to increase the category’s per-\
+formance by off-locating some Tyrrells and smaller packs of chips in discretionary space near segments\
+where young singles and couples frequent more often to increase visibilty and impulse behaviour.\
+Quantium can help the Category Manager with recommendations of where these segments are and further\
+help them with measuring the impact of the changed placement. We’ll work on measuring the impact of\
+trials in the next task and putting all these together in the third task.
+
+**#Trial and Control Store Analysis**
+
+#Creating metrics to compare trial and other store to find the most similiar control store in pre-trail period
+
+```{r}
+#Creating metrics to compare trial and other store to find the most similiar control store in pre-trail period
+
+# Create a YEARMONTH column
+combinedData <- combinedData %>%
+  mutate(YEARMONTH = year(date) * 100 + month(date))
+
+# Calculate the metrics over time
+measureOverTime <- combinedData %>%
+  group_by(store_nbr, YEARMONTH) %>%
+  summarise(
+    totSales = sum(tot_sales, na.rm = TRUE),
+    nCustomers = n_distinct(lylty_card_nbr),
+    nTxnPerCust = n_distinct(txn_id) / n_distinct(lylty_card_nbr),
+    nChipsPerTxn = sum(prod_qty, na.rm = TRUE) / n_distinct(txn_id),
+    avgPricePerUnit = sum(tot_sales, na.rm = TRUE) / sum(prod_qty, na.rm = TRUE),
+    .groups = "drop"  # Ensures the output is ungrouped
+  )
+
+measureOverTime
+```
+
+```{r}
+
+# Extracting stores that have 12 observations
+storesWithFullObs <- measureOverTime %>%
+  group_by(store_nbr) %>%
+  summarise(N = n(), .groups = "drop") %>%
+  filter(N == 12) %>% #extracting stores that have 12 obs
+  pull(store_nbr)  # Extracting the store numbers as a vector
+
+# Filtering for the pre-trial period for those stores
+preTrialMeasures <- measureOverTime %>%
+  filter(YEARMONTH < 201902 & store_nbr %in% storesWithFullObs) 
+
+# Printing the result
+print(preTrialMeasures)
+
+
+```
+
+Creating a function to correlate trial store and all other stores to find the control store
+
+```{r}
+
+# Define the function to calculate correlations
+calculateCorrelation <- function(inputTable, metricCol, storeComparison) {
+  # Extract the unique store numbers
+  storeNumbers <- unique(inputTable$store_nbr)
+  
+  # Initialize an empty data frame for results
+  calcCorrTable <- data.frame(Store1 = numeric(), Store2 = numeric(), corr_measure = numeric())
+  
+  # Loop through each store and calculate correlation
+  for (i in storeNumbers) {
+    # Extract data for the comparison store and the current store
+    storeComparisonData <- inputTable %>%
+      filter(store_nbr == storeComparison) %>%
+      pull(!!sym(metricCol))
+    
+    storeIData <- inputTable %>%
+      filter(store_nbr == i) %>%
+      pull(!!sym(metricCol))
+    
+    # Calculate correlation
+    correlation <- cor(storeComparisonData, storeIData, use = "complete.obs")
+    
+    # Append results to the results table
+    calcCorrTable <- rbind(
+      calcCorrTable,
+      data.frame(Store1 = storeComparison, Store2 = i, corr_measure = correlation)
+    )
+  }
+  
+  return(calcCorrTable)
+}
+
+
+
+
+```
+
+#Cal the abs difference (magnitude) metrics of trail to other stores
+
+```{r}
+
+calculateMagnitudeDistance <- function(inputTable, metricCol, storeComparison) {
+  # Initialize an empty data frame for results
+  calcDistTable <- data.frame(Store1 = numeric(), Store2 = numeric(), YEARMONTH = numeric(), measure = numeric())
+  
+  # Extract unique store numbers
+  storeNumbers <- unique(inputTable$store_nbr)
+  
+  # Loop through each store to calculate magnitude distance
+  for (i in storeNumbers) {
+    calculatedMeasure <- inputTable %>%
+      filter(store_nbr == storeComparison) %>%
+      select(YEARMONTH, comparisonMetric = !!sym(metricCol)) %>%
+      inner_join(
+        inputTable %>%
+          filter(store_nbr == i) %>%
+          select(YEARMONTH, metricCol = !!sym(metricCol)),
+        by = "YEARMONTH"
+      ) %>%
+      mutate(
+        Store1 = storeComparison,
+        Store2 = i,
+        measure = abs(comparisonMetric - metricCol)
+      ) %>%
+      select(Store1, Store2, YEARMONTH, measure)
+    
+    calcDistTable <- bind_rows(calcDistTable, calculatedMeasure)
+  }
+  
+  # Standardize distances to a range of 0-1
+  distTable <- calcDistTable %>%
+    group_by(Store1, YEARMONTH) %>%
+    mutate(
+      minDist = min(measure),
+      maxDist = max(measure),
+      magnitudeMeasure = 1 - (measure - minDist) / (maxDist - minDist)
+    ) %>%
+    ungroup()
+  
+  # Calculate the mean standardized magnitude measure
+  finalDistTable <- distTable %>%
+    group_by(Store1, Store2) %>%
+    summarise(mag_measure = mean(magnitudeMeasure, na.rm = TRUE), .groups = "drop")
+  
+  return(finalDistTable)
+}
+
+```
+
+Now we set the trial store as 77 and cal the correlation and magnitude for two metrics (tot sales and cust)
+
+```{r}
+# Set the trial store
+trial_store <- 77
+
+# Calculate magnitude distance for `totSales` and `nCustomers`
+magnitude_nSales <- calculateMagnitudeDistance(preTrialMeasures, "totSales", trial_store)
+magnitude_nCustomers <- calculateMagnitudeDistance(preTrialMeasures, "nCustomers", trial_store)
+
+# Calculate correlation for `totSales` and `nCustomers`
+corr_nSales <- calculateCorrelation(preTrialMeasures, "totSales", trial_store)
+corr_nCustomers <- calculateCorrelation(preTrialMeasures, "nCustomers", trial_store)
+
+magnitude_nCustomers
+corr_nCustomers
+```
+
+Let’s take a simple average of the correlation and magnitude scores for each driver. Note that if we consider\
+it more important for the trend of the drivers to be similar, we can increase the weight of the correlation\
+score (a simple average gives a weight of 0.5 to the corr_weight) or if we consider the absolute size of the\
+drivers to be more important, we can lower the weight of the correlation score.
+
+```{r}
+corr_nSales
+# Set correlation weight
+corr_weight <- 0.5 #balancing out the the important of both correlation and magnitude
+
+# Merge and calculate score for nSales
+score_nSales <- corr_nSales %>%
+  inner_join(magnitude_nSales, by = c("Store1", "Store2")) %>%
+  mutate(
+    scoreNSales = corr_measure * corr_weight + mag_measure * (1 - corr_weight)
+  )
+
+score_nSales
+
+# Merge and calculate score for nCustomers
+score_nCustomers <- corr_nCustomers %>%
+  inner_join(magnitude_nCustomers, by = c("Store1", "Store2")) %>%
+  mutate(
+    scoreNCust = corr_measure * corr_weight + mag_measure * (1 - corr_weight)
+  )
+
+```
+
+combining the score across the drivers (sales and customers)
+
+```{r}
+# Merge score_nSales and score_nCustomers
+score_Control <- score_nSales %>%
+  inner_join(score_nCustomers, by = c("Store1", "Store2")) %>%
+  mutate(finalControlScore = scoreNSales * 0.5 + scoreNCust * 0.5)
+
+score_Control
+
+# Get the store with the second highest finalControlScore for the trial store
+control_store <- score_Control %>%
+  filter(Store1 == trial_store) %>%
+  arrange(desc(finalControlScore)) %>%
+  slice(2) %>%
+  pull(Store2)
+
+# Display the result
+control_store
+
+```
+
+finding the control store - checking if the drivers are actually similar in the period
+
+```{r}
+#checking for sales
+
+# Create a new column for Store type (Trial, Control, Other)
+pastSales <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  mutate(totSales = mean(totSales, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH < 201903)  # Filter to pre-trial period
+
+pastSales
+
+# Plotting total sales by month for Trial, Control, and Other stores
+ggplot(pastSales, aes(TransactionMonth, totSales, color = Store_type)) +
+  geom_line() +
+  labs(
+    x = "Month of operation", 
+    y = "Total Sales", 
+    title = "Total Sales by Month (Trial Store vs Control vs Other Stores)"
+  ) +
+  theme_minimal() + 
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+
+```
+
+```{r}
+#checking for customers
+
+# Create a new column for Store type (Trial, Control, Other)
+pastnCustomers <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  mutate(nCustomers = mean(nCustomers, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH < 201903)  # Filter to pre-trial period
+
+# Plotting total customers by month for Trial, Control, and Other stores
+ggplot(pastnCustomers, aes(TransactionMonth, nCustomers, color = Store_type)) +
+  geom_line() +
+  labs(
+    x = "Month of operation", 
+    y = "Total Customers", 
+    title = "Total Customers by Month (Trial Store vs Control vs Other Stores)"
+  ) +
+  theme_minimal() + 
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+```
+
+**Assessment of trial**\
+The trial period goes from the start of March 2019 to June 2019. We now want to see if there has been an\
+uplift in overall chip sales.
+
+like we can see in the graphs the trial and control have some differences - hence we can scale up control stores to a level similar to control for any differences between the two stores outside of the trial period (pre-trial period)
+
+```{r}
+
+# Calculate the scaling factor for control store sales relative to trial store sales
+scalingFactorForControlSales <- preTrialMeasures %>%
+  filter(store_nbr == trial_store & YEARMONTH < 201902) %>%
+  summarise(total_trial_sales = sum(totSales)) %>%
+  pull(total_trial_sales) / preTrialMeasures %>%
+  filter(store_nbr == control_store & YEARMONTH < 201902) %>%
+  summarise(total_control_sales = sum(totSales)) %>%
+  pull(total_control_sales)
+
+scalingFactorForControlSales
+
+# Apply the scaling factor to the control store sales
+measureOverTimeSales <- measureOverTime %>%
+  mutate(controlSales = ifelse(store_nbr == control_store, totSales * scalingFactorForControlSales, totSales))
+
+measureOverTimeSales
+
+```
+
+cal per diff
+
+```{r}
+# Step 3: Calculate the percentage difference between scaled control sales and trial store sales
+percentageDiff <- measureOverTimeSales %>%
+  filter(store_nbr == trial_store) %>%
+  select(YEARMONTH, totSales) %>%
+  left_join(measureOverTimeSales %>%
+              filter(store_nbr == control_store) %>%
+              select(YEARMONTH, controlSales), by = "YEARMONTH") %>%
+  mutate(percentageDiff = abs(controlSales - totSales) / controlSales)
+
+percentageDiff
+```
+
+```{r}
+
+# Step 1: Calculate the standard deviation of the percentageDiff during the pre-trial period
+stdDev <- percentageDiff %>%
+  filter(YEARMONTH < 201902) %>%
+  summarise(std_dev = sd(percentageDiff, na.rm = TRUE)) %>%
+  pull(std_dev)
+
+# Step 2: Degrees of freedom (8 months in pre-trial period, hence 7 degrees of freedom)
+degreesOfFreedom <- 7
+
+#### We will test with a null hypothesis of there being 0 difference between trial and control stores
+# Step 3: Calculate the t-value for each percentage difference
+percentageDiffWithTValue <- percentageDiff %>%
+  mutate(tValue = (percentageDiff - 0) / stdDev) %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH > 201901 & YEARMONTH < 201905) %>% # Filter for trial period (from Feb 2019 to Apr 2019)
+  select(TransactionMonth, tValue)
+
+# Output the result
+percentageDiffWithTValue
+
+```
+
+```{r}
+# Degrees of freedom (already set to 7 in the previous step)
+degreesOfFreedom <- 7
+
+# Calculate the 95th percentile of the t-distribution with the appropriate degrees of freedom
+tPercentile95 <- qt(0.95, df = degreesOfFreedom)
+
+# Print the result
+tPercentile95
+
+```
+
+### **Purpose of the Analysis:**
+
+1.  **Null Hypothesis**: The percentage difference between trial and control stores during the trial period is **0**.
+
+2.  **Alternative Hypothesis**: The percentage difference is **not 0** (indicating the trial had an effect).
+
+3.  **t-Values Interpretation**:
+
+    -   If the **t-value** exceeds the critical thresholds (e.g., ±1.96 for a 95% confidence level), it indicates a statistically significant difference.
+
+    -   This helps determine whether the trial had an impact on the total sales.
+
+```{r}
+#graphing out the comparison values
+
+# Step 1: Classifying stores into "Trial", "Control", and "Other stores"
+pastSales <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  summarise(totSales = mean(totSales, na.rm = TRUE), .groups = "drop") %>%
+  mutate(TransactionMonth = as.Date(paste(YEARMONTH %/% 100, YEARMONTH %% 100, "01", sep = "-"), "%Y-%m-%d")) %>%
+  filter(Store_type %in% c("Trial", "Control"))
+
+# Step 2: Adjust the control store sales for the 95th and 5th percentiles based on the standard deviation
+pastSales_Controls95 <- pastSales %>%
+  filter(Store_type == "Control") %>%
+  mutate(totSales = totSales * (1 + stdDev * 2), Store_type = "Control 95th % confidence interval")
+
+pastSales_Controls5 <- pastSales %>%
+  filter(Store_type == "Control") %>%
+  mutate(totSales = totSales * (1 - stdDev * 2), Store_type = "Control 5th % confidence interval")
+
+# Step 3: Combine all the data
+trialAssessment <- bind_rows(pastSales, pastSales_Controls95, pastSales_Controls5)
+
+# Step 4: Plotting the data
+ggplot(trialAssessment, aes(TransactionMonth, totSales, color = Store_type)) +
+  geom_rect(data = trialAssessment %>% filter(YEARMONTH < 201905 & YEARMONTH > 201901),
+            aes(xmin = min(TransactionMonth), xmax = max(TransactionMonth), ymin = 0, ymax = Inf, color = NULL),
+            show.legend = FALSE) +
+  geom_line() +
+  labs(x = "Month of operation", y = "Total sales", title = "Total Sales by Month (Trial vs Control)") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+```
+
+The results show that the trial in store 77 is significantly different to its control store in the trial period as\
+the trial store performance lies outside the 5% to 95% confidence interval of the control store in two of the\
+three trial months.
+
+Assessment for ncustomers
+
+```{r}
+#checking for customers
+
+# Calculate the scaling factor for control store customers relative to trial store customers
+scalingFactorForControlCustomers <- preTrialMeasures %>%
+  filter(store_nbr == trial_store & YEARMONTH < 201902) %>%
+  summarise(total_trial_customers = sum(nCustomers)) %>%
+  pull(total_trial_customers) / preTrialMeasures %>%
+  filter(store_nbr == control_store & YEARMONTH < 201902) %>%
+  summarise(total_control_customers = sum(nCustomers)) %>%
+  pull(total_control_customers)
+
+scalingFactorForControlCustomers
+
+# Apply the scaling factor to the control store customers
+measureOverTimeCustomers <- measureOverTime %>%
+  mutate(controlCustomers = ifelse(store_nbr == control_store, nCustomers * scalingFactorForControlCustomers, nCustomers))
+
+measureOverTimeCustomers
+```
+
+```{r}
+#Calculate the percentage difference between scaled control customers and trial store customers
+percentageDiffCustomers <- measureOverTimeCustomers %>%
+  filter(store_nbr == trial_store) %>%
+  select(YEARMONTH, nCustomers) %>%
+  left_join(measureOverTimeCustomers %>%
+              filter(store_nbr == control_store) %>%
+              select(YEARMONTH, controlCustomers), by = "YEARMONTH") %>%
+  mutate(percentageDiffCustomers = abs(controlCustomers - nCustomers) / controlCustomers)
+
+percentageDiffCustomers
+```
+
+```{r}
+
+# Step 1: Calculate the standard deviation of the percentageDiffCustomers during the pre-trial period
+stdDevC <- percentageDiffCustomers %>%
+  filter(YEARMONTH < 201902) %>%
+  summarise(std_dev = sd(percentageDiffCustomers, na.rm = TRUE)) %>%
+  pull(std_dev)
+
+# Step 2: Degrees of freedom (8 months in pre-trial period, hence 7 degrees of freedom)
+degreesOfFreedom <- 7
+
+#### We will test with a null hypothesis of there being 0 difference between trial and control stores
+# Step 3: Calculate the t-value for each percentage difference
+percentageDiffWithTValueC <- percentageDiffCustomers %>%
+  mutate(tValue = (percentageDiffCustomers - 0) / stdDev) %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH > 201901 & YEARMONTH < 201905) %>% # Filter for trial period (from Feb 2019 to Apr 2019)
+  select(TransactionMonth, tValue)
+
+# Output the result
+percentageDiffWithTValueC
+
+# Calculate the 95th percentile of the t-distribution with the appropriate degrees of freedom
+tPercentile95 <- qt(0.95, df = degreesOfFreedom)
+
+
+```
+
+```{r}
+#graphing out the comparison values
+
+# Step 1: Classifying stores into "Trial", "Control", and "Other stores"
+pastCustomers <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  summarise(nCustomers = mean(nCustomers, na.rm = TRUE), .groups = "drop") %>%
+  mutate(TransactionMonth = as.Date(paste(YEARMONTH %/% 100, YEARMONTH %% 100, "01", sep = "-"), "%Y-%m-%d")) %>%
+  filter(Store_type %in% c("Trial", "Control"))
+
+# Step 2: Adjust the control store sales for the 95th and 5th percentiles based on the standard deviation
+pastCustomers_Controls95 <- pastCustomers %>%
+  filter(Store_type == "Control") %>%
+  mutate(nCustomers = nCustomers * (1 + stdDev * 2), Store_type = "Control 95th % confidence interval")
+
+pastCustomers_Controls5 <- pastCustomers %>%
+  filter(Store_type == "Control") %>%
+  mutate(nCustomers = nCustomers * (1 - stdDev * 2), Store_type = "Control 5th % confidence interval")
+
+# Step 3: Combine all the data
+trialAssessment <- bind_rows(pastCustomers, pastCustomers_Controls95, pastCustomers_Controls5)
+
+# Step 4: Plotting the data
+ggplot(trialAssessment, aes(TransactionMonth, nCustomers, color = Store_type)) +
+  geom_rect(data = trialAssessment %>% filter(YEARMONTH < 201905 & YEARMONTH > 201901),
+            aes(xmin = min(TransactionMonth), xmax = max(TransactionMonth), ymin = 0, ymax = Inf, color = NULL),
+            show.legend = FALSE) +
+  geom_line() +
+  labs(x = "Month of operation", y = "Total Customers", title = "Total Customers by Month (Trial vs Control)") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+```
+
+even the customers show significant difference in trial and control line
+
+# **##TRIAL STORE 88**
+
+Now we set the trial store as 86 and cal the correlation and magnitude for two metrics (tot sales and cust)
+
+```{r}
+# Extracting stores that have 12 observations
+storesWithFullObs <- measureOverTime %>%
+  group_by(store_nbr) %>%
+  summarise(N = n(), .groups = "drop") %>%
+  filter(N == 12) %>% #extracting stores that have 12 obs
+  pull(store_nbr)  # Extracting the store numbers as a vector
+
+# Filtering for the pre-trial period for those stores
+preTrialMeasures <- measureOverTime %>%
+  filter(YEARMONTH < 201902 & store_nbr %in% storesWithFullObs) 
+```
+
+```{r}
+# Set the trial store 
+trial_store <- 86 
+# Calculate magnitude distance for `totSales` and `nCustomers` 
+magnitude_nSales <- calculateMagnitudeDistance(preTrialMeasures, "totSales", trial_store) 
+magnitude_nCustomers <- calculateMagnitudeDistance(preTrialMeasures, "nCustomers", trial_store)  # Calculate correlation for `totSales` and `nCustomers` 
+
+corr_nSales <- calculateCorrelation(preTrialMeasures, "totSales", trial_store) 
+corr_nCustomers <- calculateCorrelation(preTrialMeasures, "nCustomers", trial_store)  
+
+```
+
+Let’s take a simple average of the correlation and magnitude scores for each driver. Note that if we consider\
+it more important for the trend of the drivers to be similar, we can increase the weight of the correlation\
+score (a simple average gives a weight of 0.5 to the corr_weight) or if we consider the absolute size of the\
+drivers to be more important, we can lower the weight of the correlation score.
+
+```{r}
+# Set correlation weight 
+corr_weight <- 0.5 #balancing out the the important of both correlation and magnitude  
+
+# Merge and calculate score for nSales 
+score_nSales <- corr_nSales %>%   
+  inner_join(magnitude_nSales, by = c("Store1", "Store2")) %>%   
+  mutate(     scoreNSales = corr_measure * corr_weight + mag_measure * (1 - corr_weight)   )  
+
+# Merge and calculate score for nCustomers 
+score_nCustomers <- corr_nCustomers %>%   
+  inner_join(magnitude_nCustomers, by = c("Store1", "Store2")) %>%   
+  mutate(     scoreNCust = corr_measure * corr_weight + mag_measure * (1 - corr_weight)   ) 
+```
+
+combining the score across the drivers (sales and customers)
+
+```{r}
+# Merge score_nSales and score_nCustomers
+score_Control <- score_nSales %>%
+  inner_join(score_nCustomers, by = c("Store1", "Store2")) %>%
+  mutate(finalControlScore = scoreNSales * 0.5 + scoreNCust * 0.5)
+
+# Get the store with the second highest finalControlScore for the trial store
+control_store <- score_Control %>%
+  filter(Store1 == trial_store) %>%
+  arrange(desc(finalControlScore)) %>%
+  slice(2) %>%
+  pull(Store2)
+
+# Display the result
+control_store
+```
+
+finding the control store - checking if the drivers are actually similar in the period
+
+```{r}
+#checking for sales
+
+# Create a new column for Store type (Trial, Control, Other)
+pastSales <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  mutate(totSales = mean(totSales, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH < 201903)  # Filter to pre-trial period
+
+pastSales
+
+# Plotting total sales by month for Trial, Control, and Other stores
+ggplot(pastSales, aes(TransactionMonth, totSales, color = Store_type)) +
+  geom_line() +
+  labs(
+    x = "Month of operation", 
+    y = "Total Sales", 
+    title = "Total Sales by Month (Trial Store vs Control vs Other Stores)"
+  ) +
+  theme_minimal() + 
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+```
+
+```{r}
+#checking for customers
+
+# Create a new column for Store type (Trial, Control, Other)
+pastnCustomers <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  mutate(nCustomers = mean(nCustomers, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH < 201903)  # Filter to pre-trial period
+
+# Plotting total customers by month for Trial, Control, and Other stores
+ggplot(pastnCustomers, aes(TransactionMonth, nCustomers, color = Store_type)) +
+  geom_line() +
+  labs(
+    x = "Month of operation", 
+    y = "Total Customers", 
+    title = "Total Customers by Month (Trial Store vs Control vs Other Stores)"
+  ) +
+  theme_minimal() + 
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+```
+
+**Assessment of trial**\
+The trial period goes from the start of March 2019 to June 2019. We now want to see if there has been an\
+uplift in overall chip sales.
+
+like we can see in the graphs the trial and control have some differences - hence we can scale up control stores to a level similar to control for any differences between the two stores outside of the trial period (pre-trial period)
+
+```{r}
+# Calculate the scaling factor for control store sales relative to trial store sales
+scalingFactorForControlSales <- preTrialMeasures %>%
+  filter(store_nbr == trial_store & YEARMONTH < 201902) %>%
+  summarise(total_trial_sales = sum(totSales)) %>%
+  pull(total_trial_sales) / preTrialMeasures %>%
+  filter(store_nbr == control_store & YEARMONTH < 201902) %>%
+  summarise(total_control_sales = sum(totSales)) %>%
+  pull(total_control_sales)
+
+scalingFactorForControlSales
+
+# Apply the scaling factor to the control store sales
+measureOverTimeSales <- measureOverTime %>%
+  mutate(controlSales = ifelse(store_nbr == control_store, totSales * scalingFactorForControlSales, totSales))
+
+measureOverTimeSales
+```
+
+cal per diff
+
+```{r}
+# Step 3: Calculate the percentage difference between scaled control sales and trial store sales
+percentageDiff <- measureOverTimeSales %>%
+  filter(store_nbr == trial_store) %>%
+  select(YEARMONTH, totSales) %>%
+  left_join(measureOverTimeSales %>%
+              filter(store_nbr == control_store) %>%
+              select(YEARMONTH, controlSales), by = "YEARMONTH") %>%
+  mutate(percentageDiff = abs(controlSales - totSales) / controlSales)
+
+
+# Step 1: Calculate the standard deviation of the percentageDiff during the pre-trial period
+stdDev <- percentageDiff %>%
+  filter(YEARMONTH < 201902) %>%
+  summarise(std_dev = sd(percentageDiff, na.rm = TRUE)) %>%
+  pull(std_dev)
+
+# Step 2: Degrees of freedom (8 months in pre-trial period, hence 7 degrees of freedom)
+degreesOfFreedom <- 7
+
+#### We will test with a null hypothesis of there being 0 difference between trial and control stores
+# Step 3: Calculate the t-value for each percentage difference
+percentageDiffWithTValue <- percentageDiff %>%
+  mutate(tValue = (percentageDiff - 0) / stdDev) %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH > 201901 & YEARMONTH < 201905) %>% # Filter for trial period (from Feb 2019 to Apr 2019)
+  select(TransactionMonth, tValue)
+
+
+# Calculate the 95th percentile of the t-distribution with the appropriate degrees of freedom
+tPercentile95 <- qt(0.95, df = degreesOfFreedom)
+
+
+```
+
+```{r}
+#graphing out the comparison values
+
+# Step 1: Classifying stores into "Trial", "Control", and "Other stores"
+pastSales <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  summarise(totSales = mean(totSales, na.rm = TRUE), .groups = "drop") %>%
+  mutate(TransactionMonth = as.Date(paste(YEARMONTH %/% 100, YEARMONTH %% 100, "01", sep = "-"), "%Y-%m-%d")) %>%
+  filter(Store_type %in% c("Trial", "Control"))
+
+# Step 2: Adjust the control store sales for the 95th and 5th percentiles based on the standard deviation
+pastSales_Controls95 <- pastSales %>%
+  filter(Store_type == "Control") %>%
+  mutate(totSales = totSales * (1 + stdDev * 2), Store_type = "Control 95th % confidence interval")
+
+pastSales_Controls5 <- pastSales %>%
+  filter(Store_type == "Control") %>%
+  mutate(totSales = totSales * (1 - stdDev * 2), Store_type = "Control 5th % confidence interval")
+
+# Step 3: Combine all the data
+trialAssessment <- bind_rows(pastSales, pastSales_Controls95, pastSales_Controls5)
+
+# Step 4: Plotting the data
+ggplot(trialAssessment, aes(TransactionMonth, totSales, color = Store_type)) +
+  geom_rect(data = trialAssessment %>% filter(YEARMONTH < 201905 & YEARMONTH > 201901),
+            aes(xmin = min(TransactionMonth), xmax = max(TransactionMonth), ymin = 0, ymax = Inf, color = NULL),
+            show.legend = FALSE) +
+  geom_line() +
+  labs(x = "Month of operation", y = "Total sales", title = "Total Sales by Month (Trial vs Control)") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+```
+
+Assessment for ncustomers
+
+```{r}
+#checking for customers
+
+# Calculate the scaling factor for control store customers relative to trial store customers
+scalingFactorForControlCustomers <- preTrialMeasures %>%
+  filter(store_nbr == trial_store & YEARMONTH < 201902) %>%
+  summarise(total_trial_customers = sum(nCustomers)) %>%
+  pull(total_trial_customers) / preTrialMeasures %>%
+  filter(store_nbr == control_store & YEARMONTH < 201902) %>%
+  summarise(total_control_customers = sum(nCustomers)) %>%
+  pull(total_control_customers)
+
+# Apply the scaling factor to the control store customers
+measureOverTimeCustomers <- measureOverTime %>%
+  mutate(controlCustomers = ifelse(store_nbr == control_store, nCustomers * scalingFactorForControlCustomers, nCustomers))
+```
+
+```{r}
+#Calculate the percentage difference between scaled control customers and trial store customers
+percentageDiffCustomers <- measureOverTimeCustomers %>%
+  filter(store_nbr == trial_store) %>%
+  select(YEARMONTH, nCustomers) %>%
+  left_join(measureOverTimeCustomers %>%
+              filter(store_nbr == control_store) %>%
+              select(YEARMONTH, controlCustomers), by = "YEARMONTH") %>%
+  mutate(percentageDiffCustomers = abs(controlCustomers - nCustomers) / controlCustomers)
+
+# Step 1: Calculate the standard deviation of the percentageDiffCustomers during the pre-trial period
+stdDevC <- percentageDiffCustomers %>%
+  filter(YEARMONTH < 201902) %>%
+  summarise(std_dev = sd(percentageDiffCustomers, na.rm = TRUE)) %>%
+  pull(std_dev)
+
+# Step 2: Degrees of freedom (8 months in pre-trial period, hence 7 degrees of freedom)
+degreesOfFreedom <- 7
+
+#### We will test with a null hypothesis of there being 0 difference between trial and control stores
+# Step 3: Calculate the t-value for each percentage difference
+percentageDiffWithTValueC <- percentageDiffCustomers %>%
+  mutate(tValue = (percentageDiffCustomers - 0) / stdDev) %>%
+  mutate(TransactionMonth = as.Date(paste0(YEARMONTH %/% 100, "-", YEARMONTH %% 100, "-01"), "%Y-%m-%d")) %>%
+  filter(YEARMONTH > 201901 & YEARMONTH < 201905) %>% # Filter for trial period (from Feb 2019 to Apr 2019)
+  select(TransactionMonth, tValue)
+
+# Output the result
+percentageDiffWithTValueC
+
+# Calculate the 95th percentile of the t-distribution with the appropriate degrees of freedom
+tPercentile95 <- qt(0.95, df = degreesOfFreedom)
+
+```
+
+```{r}
+#graphing out the comparison values
+
+# Step 1: Classifying stores into "Trial", "Control", and "Other stores"
+pastCustomers <- measureOverTime %>%
+  mutate(Store_type = case_when(
+    store_nbr == trial_store ~ "Trial",
+    store_nbr == control_store ~ "Control",
+    TRUE ~ "Other stores"
+  )) %>%
+  group_by(YEARMONTH, Store_type) %>%
+  summarise(nCustomers = mean(nCustomers, na.rm = TRUE), .groups = "drop") %>%
+  mutate(TransactionMonth = as.Date(paste(YEARMONTH %/% 100, YEARMONTH %% 100, "01", sep = "-"), "%Y-%m-%d")) %>%
+  filter(Store_type %in% c("Trial", "Control"))
+
+# Step 2: Adjust the control store sales for the 95th and 5th percentiles based on the standard deviation
+pastCustomers_Controls95 <- pastCustomers %>%
+  filter(Store_type == "Control") %>%
+  mutate(nCustomers = nCustomers * (1 + stdDev * 2), Store_type = "Control 95th % confidence interval")
+
+pastCustomers_Controls5 <- pastCustomers %>%
+  filter(Store_type == "Control") %>%
+  mutate(nCustomers = nCustomers * (1 - stdDev * 2), Store_type = "Control 5th % confidence interval")
+
+# Step 3: Combine all the data
+trialAssessment <- bind_rows(pastCustomers, pastCustomers_Controls95, pastCustomers_Controls5)
+
+# Step 4: Plotting the data
+ggplot(trialAssessment, aes(TransactionMonth, nCustomers, color = Store_type)) +
+  geom_rect(data = trialAssessment %>% filter(YEARMONTH < 201905 & YEARMONTH > 201901),
+            aes(xmin = min(TransactionMonth), xmax = max(TransactionMonth), ymin = 0, ymax = Inf, color = NULL),
+            show.legend = FALSE) +
+  geom_line() +
+  labs(x = "Month of operation", y = "Total Customers", title = "Total Customers by Month (Trial vs Control)") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Adjust x-axis for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+```
